@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Virtual Agent (Gemini Powered)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styling for a smooth, mobile-friendly interface */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .chat-container {
+            max-height: 80vh; 
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+        /* Custom scrollbar for aesthetics */
+        .chat-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .chat-container::-webkit-scrollbar-thumb {
+            background: #93c5fd; /* Blue-300 */
+            border-radius: 10px;
+        }
+        .message-bubble {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 20px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #3b82f6; /* Blue-500 for user */
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .bot-message {
+            background-color: #ffffff; /* White for bot */
+            color: #1f2937;
+            border-bottom-left-radius: 4px;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4 sm:p-6">
+
+    <div class="w-full max-w-xl bg-white rounded-xl shadow-2xl flex flex-col h-[90vh] sm:h-[700px] overflow-hidden">
+        
+        <!-- Header -->
+        <header class="p-4 bg-gray-900 text-white flex items-center rounded-t-xl shadow-lg">
+            <svg class="w-7 h-7 mr-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2m-6 12v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7.5 7.5L6 6m12 12l-1.5-1.5M7.5 16.5L6 18m12-12l-1.5 1.5"></path></svg>
+            <h1 class="text-xl font-bold">AI Customer Support Agent</h1>
+        </header>
+
+        <!-- Chat Messages Container -->
+        <div id="chat-container" class="flex-grow p-4 chat-container">
+            <!-- Initial Bot Message -->
+            <div class="flex justify-start">
+                <div class="message-bubble bot-message">
+                    Hello! I am a Virtual Agent powered by Google's Gemini. I can answer questions, provide support, and search the web for up-to-date information. How can I assist you?
+                </div>
+            </div>
+            <!-- Loading Indicator Placeholder -->
+            <div id="loading-indicator" class="flex justify-start hidden">
+                <div class="message-bubble bot-message flex items-center">
+                    <div class="loader"></div>
+                    <span>Agent is thinking...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="p-4 border-t border-gray-200">
+            <div class="flex items-center">
+                <input type="text" id="user-input" placeholder="Ask a question or request support..." 
+                       class="flex-grow p-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150"
+                       onkeydown="if(event.key === 'Enter') sendMessage()">
+                <button onclick="sendMessage()" id="send-button"
+                        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-r-lg shadow-md transition duration-150 active:scale-95 flex items-center justify-center disabled:opacity-50"
+                        disabled>
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
+        // Global state to prevent concurrent API calls
+        let isSending = false;
+
+        // --- Gemini API Configuration ---
+        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+        // API Key is intentionally left empty; the environment provides it.
+        const API_KEY = ""; 
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+        
+        const SYSTEM_PROMPT = "You are a highly efficient and friendly customer support virtual agent named 'Agent 9000'. You are concise, empathetic, and always strive to provide the most accurate, up-to-date information by leveraging your search tool. Format your response clearly using markdown.";
+        
+        // Enable/disable send button based on input content
+        userInput.addEventListener('input', () => {
+            sendButton.disabled = isSending || userInput.value.trim() === '';
+        });
+
+        // --- UI Functions ---
+
+        /**
+         * Adds a message bubble to the chat container.
+         * @param {string} text The message content (can contain HTML/Markdown).
+         * @param {string} sender 'user' or 'bot'.
+         */
+        function addMessage(text, sender, sources = []) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = sender === 'user' ? 'flex justify-end' : 'flex justify-start';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble ' + (sender === 'user' ? 'user-message' : 'bot-message');
+            
+            // Basic markdown to HTML conversion for display in the bubble
+            let htmlContent = text
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+                .replace(/\*(.*?)\*/g, '<em>$1</em>') // Italic
+                .replace(/\n/g, '<br>'); // Newlines
+
+            bubble.innerHTML = htmlContent;
+
+            // Add source attributions if available (only for bot)
+            if (sender === 'bot' && sources.length > 0) {
+                const sourcesDiv = document.createElement('div');
+                sourcesDiv.className = 'mt-3 pt-2 border-t border-gray-200 text-xs text-gray-500';
+                sourcesDiv.innerHTML = '<strong>Sources:</strong><ul>' + 
+                    sources.map((src, index) => 
+                        `<li>${index + 1}. <a href="${src.uri}" target="_blank" class="text-blue-500 hover:underline">${src.title || src.uri}</a></li>`
+                    ).join('') + 
+                    '</ul>';
+                bubble.appendChild(sourcesDiv);
+            }
+            
+            messageDiv.appendChild(bubble);
+            chatContainer.appendChild(messageDiv);
+            
+            // Auto-scroll to the bottom of the chat
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        /**
+         * Toggles the loading indicator visibility.
+         * @param {boolean} show If true, shows the indicator.
+         */
+        function setLoading(show) {
+            isSending = show;
+            loadingIndicator.classList.toggle('hidden', !show);
+            sendButton.disabled = show || userInput.value.trim() === '';
+            userInput.disabled = show;
+            if (show) {
+                 // Ensure we scroll to the loader when it appears
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        }
+
+        // --- API Logic ---
+
+        /**
+         * Calls the Gemini API with exponential backoff for retries.
+         * @param {string} prompt The user's query.
+         * @param {number} attempt The current retry attempt (starts at 1).
+         * @returns {Promise<{text: string, sources: Array<{uri: string, title: string}>}>} The generated content and sources.
+         */
+        async function callGeminiApi(prompt, attempt = 1) {
+            const MAX_RETRIES = 5;
+            const BASE_DELAY = 1000; // 1 second
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                // Enable Google Search for up-to-date and grounded responses
+                tools: [{ "google_search": {} }],
+                systemInstruction: {
+                    parts: [{ text: SYSTEM_PROMPT }]
+                },
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const candidate = result.candidates?.[0];
+
+                if (candidate && candidate.content?.parts?.[0]?.text) {
+                    const text = candidate.content.parts[0].text;
+                    let sources = [];
+                    const groundingMetadata = candidate.groundingMetadata;
+                    
+                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                        sources = groundingMetadata.groundingAttributions
+                            .map(attribution => ({
+                                uri: attribution.web?.uri,
+                                title: attribution.web?.title,
+                            }))
+                            .filter(source => source.uri && source.title);
+                    }
+                    return { text, sources };
+                } else {
+                    throw new Error("Received an empty or malformed response from the model.");
+                }
+
+            } catch (error) {
+                if (attempt < MAX_RETRIES) {
+                    const delay = BASE_DELAY * Math.pow(2, attempt - 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return callGeminiApi(prompt, attempt + 1); // Retry
+                } else {
+                    console.error("API Call failed after maximum retries:", error);
+                    throw new Error("I apologize, but the connection to my knowledge base failed. Please try again in a moment.");
+                }
+            }
+        }
+
+        /**
+         * Handles the user sending a message and triggers the bot's response.
+         */
+        async function sendMessage() {
+            const userText = userInput.value.trim();
+            if (userText === '' || isSending) return;
+
+            // 1. Display user message and clear input
+            addMessage(userText, 'user');
+            userInput.value = '';
+            
+            // 2. Set loading state
+            setLoading(true);
+
+            try {
+                // 3. Call the AI model
+                const responseData = await callGeminiApi(userText);
+                
+                // 4. Display bot response
+                addMessage(responseData.text, 'bot', responseData.sources);
+
+            } catch (error) {
+                // 5. Display error message
+                addMessage(error.message, 'bot');
+            } finally {
+                // 6. Reset state
+                setLoading(false);
+                userInput.focus();
+            }
+        }
+        
+        // --- Initialization ---
+        window.onload = () => {
+            // Re-check button state after everything loads
+            sendButton.disabled = userInput.value.trim() === '';
+            userInput.focus();
+        };
+
+    </script>
+</body>
+</html>
