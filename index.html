@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Virtual Agent (Gemini Powered)</title>
+    <title>Virtual Agent</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load Inter font -->
@@ -67,15 +67,16 @@
         <!-- Header -->
         <header class="p-4 bg-gray-900 text-white flex items-center rounded-t-xl shadow-lg">
             <svg class="w-7 h-7 mr-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2m-6 12v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7.5 7.5L6 6m12 12l-1.5-1.5M7.5 16.5L6 18m12-12l-1.5 1.5"></path></svg>
-            <h1 class="text-xl font-bold">AI Customer Support Agent</h1>
+            <h1 class="text-xl font-bold">Virtual Agent</h1>
         </header>
 
         <!-- Chat Messages Container -->
         <div id="chat-container" class="flex-grow p-4 chat-container">
-            <!-- Initial Bot Message -->
-            <div class="flex justify-start">
-                <div class="message-bubble bot-message">
-                    Hello! I am a Virtual Agent powered by Google's Gemini. I can answer questions, provide support, and search the web for up-to-date information. How can I assist you?
+            <!-- Initial content added by JS after history loads -->
+            <div id="loading-history-indicator" class="flex justify-start">
+                <div class="message-bubble bot-message flex items-center">
+                    <div class="loader"></div>
+                    <span>Loading conversation history...</span>
                 </div>
             </div>
             <!-- Loading Indicator Placeholder -->
@@ -89,49 +90,129 @@
 
         <!-- Input Area -->
         <div class="p-4 border-t border-gray-200">
+             <!-- Image Preview Area -->
+            <div id="image-preview-container" class="hidden mb-3 p-2 bg-gray-100 rounded-lg border border-gray-300 relative">
+                <img id="image-preview" class="max-h-24 w-auto rounded object-contain">
+                <button id="clear-image-button" title="Remove Image"
+                        class="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 leading-none text-xs w-5 h-5 flex items-center justify-center hover:bg-red-600 transition">
+                    &times;
+                </button>
+            </div>
+            
             <div class="flex items-center">
+                <!-- File Input (Hidden) -->
+                <input type="file" id="file-input" accept="image/*" class="hidden">
+                
+                <!-- Upload Button -->
+                <button id="upload-button" title="Attach Image"
+                        class="text-gray-600 hover:text-blue-500 p-2 mr-2 transition duration-150 active:scale-95 rounded-full">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 16m-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2z"></path></svg>
+                </button>
+
+                <!-- New: Microphone Button -->
+                <button id="voice-button" title="Voice Input"
+                        class="text-gray-600 hover:text-red-500 p-2 mr-2 transition duration-150 active:scale-95 rounded-full relative">
+                    <!-- Mic Icon -->
+                    <svg id="mic-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7v0m0 0v0a7 7 0 01-7-7m7 7v0V5a5 5 0 1110 0v6a7 7 0 01-7 7v0z"></path></svg>
+                    <!-- Pulsing effect when active -->
+                    <span id="mic-pulse" class="absolute inset-0 m-auto w-8 h-8 rounded-full bg-red-500 opacity-0 animate-ping duration-1000 hidden -z-10"></span>
+                </button>
+                
                 <input type="text" id="user-input" placeholder="Ask a question or request support..." 
                        class="flex-grow p-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150"
-                       onkeydown="if(event.key === 'Enter') sendMessage()">
-                <button onclick="sendMessage()" id="send-button"
+                       disabled>
+                <button id="send-button"
                         class="bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-r-lg shadow-md transition duration-150 active:scale-95 flex items-center justify-center disabled:opacity-50"
                         disabled>
                     Send
                 </button>
             </div>
+            <p id="user-info" class="text-xs mt-2 text-gray-500 truncate">Agent Status: Connecting...</p>
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        // --- Firebase Imports ---
+        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- DOM Elements ---
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
         const sendButton = document.getElementById('send-button');
         const loadingIndicator = document.getElementById('loading-indicator');
+        const loadingHistoryIndicator = document.getElementById('loading-history-indicator');
+        const userInfo = document.getElementById('user-info');
+        
+        // New Multimodal Elements
+        const fileInput = document.getElementById('file-input');
+        const uploadButton = document.getElementById('upload-button');
+        const previewContainer = document.getElementById('image-preview-container');
+        const previewImg = document.getElementById('image-preview');
+        const clearImageButton = document.getElementById('clear-image-button');
 
-        // Global state to prevent concurrent API calls
+        // New Voice Elements
+        const voiceButton = document.getElementById('voice-button');
+        const micPulse = document.getElementById('mic-pulse');
+        
+        // --- Global State ---
         let isSending = false;
+        let db;
+        let auth;
+        let userId = null;
+        let chatRef;
+        let selectedImageBase64 = null; // Stores {data: string, mimeType: string}
 
-        // --- Gemini API Configuration ---
-        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
-        // API Key is intentionally left empty; the environment provides it.
+        // --- Voice Input State ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let isListening = false;
+        let finalTranscript = ''; 
+
+        // --- AI Agent API Configuration ---
+        const AI_SERVICE_ID = "gemini-2.5-flash-preview-09-2025";
         const API_KEY = ""; 
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${AI_SERVICE_ID}:generateContent?key=${API_KEY}`;
         
-        const SYSTEM_PROMPT = "You are a highly efficient and friendly customer support virtual agent named 'Agent 9000'. You are concise, empathetic, and always strive to provide the most accurate, up-to-date information by leveraging your search tool. Format your response clearly using markdown.";
+        const SYSTEM_PROMPT = "You are a highly efficient and friendly customer support virtual agent named 'Virtual Agent'. You are concise, empathetic, and always strive to provide the most accurate, up-to-date information by leveraging your search tool. Format your response clearly using markdown.";
         
-        // Enable/disable send button based on input content
-        userInput.addEventListener('input', () => {
-            sendButton.disabled = isSending || userInput.value.trim() === '';
-        });
-
-        // --- UI Functions ---
+        // --- Utility Functions ---
 
         /**
-         * Adds a message bubble to the chat container.
-         * @param {string} text The message content (can contain HTML/Markdown).
-         * @param {string} sender 'user' or 'bot'.
+         * Clears the chat container and displays all messages from history.
+         * @param {Array} messages The conversation history array.
          */
-        function addMessage(text, sender, sources = []) {
+        function renderHistory(messages) {
+            // Clear all previous bubbles, except the primary loading indicator
+            while (chatContainer.children.length > 0 && chatContainer.children[0] !== loadingHistoryIndicator) {
+                chatContainer.removeChild(chatContainer.children[0]);
+            }
+            
+            messages.forEach(msg => {
+                // Ensure messages are rendered in the correct order (history first)
+                _addMessageBubble(msg.text, msg.sender, msg.sources || [], true);
+            });
+            
+            // Move the final loading indicator to the bottom
+            chatContainer.appendChild(loadingIndicator);
+            
+            // Remove the initial history loading message
+            loadingHistoryIndicator.classList.add('hidden');
+            
+            // Add the initial welcome message if history is empty (Updated message)
+            if (messages.length === 0) {
+                _addMessageBubble("Hello! I am your Virtual Agent. I can answer questions, provide support, and search the web for up-to-date information. How can I assist you?", 'bot', [], true);
+            }
+
+            // Auto-scroll to the bottom of the chat
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        /**
+         * Internal function to create and append a single message bubble.
+         */
+        function _addMessageBubble(text, sender, sources = [], isHistory = false) {
             const messageDiv = document.createElement('div');
             messageDiv.className = sender === 'user' ? 'flex justify-end' : 'flex justify-start';
 
@@ -159,10 +240,14 @@
             }
             
             messageDiv.appendChild(bubble);
-            chatContainer.appendChild(messageDiv);
             
-            // Auto-scroll to the bottom of the chat
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+            if (isHistory) {
+                // Insert history messages before the loading indicator
+                chatContainer.insertBefore(messageDiv, loadingIndicator);
+            } else {
+                // Append new messages normally (will be before the loading indicator after the history is rendered)
+                chatContainer.appendChild(messageDiv);
+            }
         }
 
         /**
@@ -172,28 +257,273 @@
         function setLoading(show) {
             isSending = show;
             loadingIndicator.classList.toggle('hidden', !show);
-            sendButton.disabled = show || userInput.value.trim() === '';
+            sendButton.disabled = show || (userInput.value.trim() === '' && selectedImageBase64 === null);
             userInput.disabled = show;
+            uploadButton.disabled = show;
+            voiceButton.disabled = show;
+            
             if (show) {
                  // Ensure we scroll to the loader when it appears
                 chatContainer.scrollTop = chatContainer.scrollHeight;
             }
         }
 
-        // --- API Logic ---
+        /**
+         * Enables user input controls when the agent is ready.
+         */
+        function setControlsReady(ready) {
+            userInput.disabled = !ready;
+            // Only enable the button if ready AND (input is not empty OR an image is selected)
+            sendButton.disabled = !ready || (userInput.value.trim() === '' && selectedImageBase64 === null);
+            uploadButton.disabled = !ready;
+            voiceButton.disabled = !ready; 
+
+            if (ready) {
+                userInput.focus();
+                userInfo.textContent = `Agent Status: Connected (User ID: ${userId})`;
+            } else {
+                userInfo.textContent = `Agent Status: Connecting...`;
+            }
+        }
 
         /**
-         * Calls the Gemini API with exponential backoff for retries.
+         * Clears the selected image and resets the preview UI.
+         */
+        function clearImage() {
+            selectedImageBase64 = null;
+            previewImg.src = '';
+            previewContainer.classList.add('hidden');
+            // Re-check controls readiness as removing the image might disable the send button
+            setControlsReady(true); 
+        }
+
+        /**
+         * Reads the selected file and converts it to a base64 string for the API payload.
+         * @param {Event} event The file change event.
+         */
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Image size limit check (4MB)
+            const MAX_SIZE = 4 * 1024 * 1024; 
+            if (!file.type.startsWith('image/') || file.size > MAX_SIZE) {
+                console.error("File selection failed: Please select an image file under 4MB.");
+                clearImage();
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                // e.target.result is a data URL (e.g., "data:image/png;base64,....")
+                const dataUrl = e.target.result;
+                const base64Content = dataUrl.split(',')[1];
+                
+                selectedImageBase64 = {
+                    data: base64Content,
+                    mimeType: file.type
+                };
+                
+                previewImg.src = dataUrl;
+                previewContainer.classList.remove('hidden');
+                
+                // Clear the file input value so the same file can be selected again
+                fileInput.value = ''; 
+                setControlsReady(true);
+            };
+            reader.onerror = (error) => {
+                console.error("Error reading file:", error);
+                clearImage();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // --- Speech Recognition Logic ---
+        function setupVoiceRecognition() {
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.continuous = false; // Stop after a pause
+                recognition.interimResults = true; // Get results as the user speaks
+                recognition.lang = 'en-US';
+
+                recognition.onstart = () => {
+                    isListening = true;
+                    micPulse.classList.remove('hidden');
+                    voiceButton.title = 'Stop Voice Input';
+                    voiceButton.classList.add('text-red-500', 'ring-2', 'ring-red-300');
+                    userInput.value = ''; 
+                    userInput.placeholder = 'Speak now...';
+                    setControlsReady(false); // Disable other controls while listening
+                    userInput.disabled = false; // Keep the input box enabled to show transcript
+                };
+
+                recognition.onresult = (event) => {
+                    let interimTranscript = '';
+                    finalTranscript = '';
+                    
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript;
+                        if (event.results[i].isFinal) {
+                            finalTranscript += transcript + ' ';
+                        } else {
+                            interimTranscript += transcript;
+                        }
+                    }
+                    
+                    // Show transcript in the input field
+                    userInput.value = finalTranscript + interimTranscript;
+                    // Keep button disabled state updated
+                    sendButton.disabled = isSending || (userInput.value.trim() === '' && selectedImageBase64 === null);
+                };
+
+                recognition.onend = () => {
+                    isListening = false;
+                    micPulse.classList.add('hidden');
+                    voiceButton.title = 'Voice Input';
+                    voiceButton.classList.remove('text-red-500', 'ring-2', 'ring-red-300');
+                    userInput.placeholder = 'Ask a question or request support...';
+
+                    // Set final text
+                    userInput.value = finalTranscript.trim();
+                    // Re-enable controls
+                    setControlsReady(true);
+                };
+                
+                recognition.onerror = (event) => {
+                    console.error('Speech Recognition Error:', event.error);
+                    if (event.error === 'not-allowed') {
+                        // Permissions error
+                        userInput.value = "Voice input denied. Please check microphone permissions.";
+                    } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                         userInput.value = 'Error: ' + event.error;
+                    }
+                    recognition.stop();
+                    setControlsReady(true);
+                };
+
+                voiceButton.addEventListener('click', () => {
+                    if (isListening) {
+                        recognition.stop();
+                    } else {
+                        finalTranscript = ''; // Reset transcript before starting
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            if (e.name === 'InvalidStateError') {
+                                // Recognition is already active, ignore
+                            } else {
+                                console.error("Recognition start error:", e);
+                            }
+                        }
+                    }
+                });
+
+            } else {
+                // Hide the voice button if the API is not supported
+                voiceButton.classList.add('hidden');
+                console.warn("Web Speech API (SpeechRecognition) is not supported in this browser.");
+            }
+        }
+
+
+        // --- Firestore Logic ---
+
+        /**
+         * Saves a new message to the conversation history in Firestore.
+         * @param {string} text The message content.
+         * @param {string} sender 'user' or 'bot'.
+         * @param {Array} sources Optional array of sources.
+         */
+        async function saveMessage(text, sender, sources = []) {
+            if (!chatRef) {
+                console.error("Chat reference is not initialized.");
+                return;
+            }
+            
+            // Fetch the current chat history array
+            const docSnapshot = await new Promise(resolve => onSnapshot(chatRef, resolve));
+            const data = docSnapshot.data() || { messages: [] };
+            let messages = data.messages || [];
+
+            // Add the new message
+            messages.push({
+                text: text,
+                sender: sender,
+                timestamp: Date.now(),
+                sources: sources
+            });
+            
+            // Limit history to the last 50 messages to prevent excessive document growth
+            if (messages.length > 50) {
+                messages = messages.slice(-50);
+            }
+
+            try {
+                await setDoc(chatRef, { messages: messages });
+            } catch (e) {
+                console.error("Error saving document: ", e);
+            }
+        }
+
+        /**
+         * Sets up the real-time listener for the chat history.
+         */
+        function setupHistoryListener() {
+            if (!db || !userId) return;
+
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            // Path: /artifacts/{appId}/users/{userId}/chat_history/session_data
+            chatRef = doc(db, 'artifacts', appId, 'users', userId, 'chat_history', 'session_data');
+
+            onSnapshot(chatRef, (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    const data = docSnapshot.data();
+                    if (data && data.messages) {
+                        // Sort messages by timestamp just in case, then render
+                        const sortedMessages = data.messages.sort((a, b) => a.timestamp - b.timestamp);
+                        renderHistory(sortedMessages);
+                    }
+                } else {
+                    // Document doesn't exist yet, render initial message
+                    renderHistory([]);
+                }
+            }, (error) => {
+                console.error("Firestore listener error:", error);
+                loadingHistoryIndicator.children[0].children[1].textContent = "Error loading history. Using fresh session.";
+                renderHistory([]);
+            });
+        }
+
+
+        // --- AI API Logic ---
+
+        /**
+         * Calls the AI API with exponential backoff for retries.
          * @param {string} prompt The user's query.
          * @param {number} attempt The current retry attempt (starts at 1).
          * @returns {Promise<{text: string, sources: Array<{uri: string, title: string}>}>} The generated content and sources.
          */
-        async function callGeminiApi(prompt, attempt = 1) {
+        async function getAIResponse(prompt, attempt = 1) {
             const MAX_RETRIES = 5;
             const BASE_DELAY = 1000; // 1 second
 
+            const contentsParts = [];
+            
+            if (selectedImageBase64) {
+                // Add the image data part
+                contentsParts.push({
+                    inlineData: {
+                        mimeType: selectedImageBase64.mimeType,
+                        data: selectedImageBase64.data
+                    }
+                });
+            }
+            
+            // Always add the text part (even if empty, for image-only prompts)
+            contentsParts.push({ text: prompt });
+
             const payload = {
-                contents: [{ parts: [{ text: prompt }] }],
+                contents: [{ parts: contentsParts }],
                 // Enable Google Search for up-to-date and grounded responses
                 tools: [{ "google_search": {} }],
                 systemInstruction: {
@@ -237,7 +567,7 @@
                 if (attempt < MAX_RETRIES) {
                     const delay = BASE_DELAY * Math.pow(2, attempt - 1);
                     await new Promise(resolve => setTimeout(resolve, delay));
-                    return callGeminiApi(prompt, attempt + 1); // Retry
+                    return getAIResponse(prompt, attempt + 1); // Retry
                 } else {
                     console.error("API Call failed after maximum retries:", error);
                     throw new Error("I apologize, but the connection to my knowledge base failed. Please try again in a moment.");
@@ -250,39 +580,109 @@
          */
         async function sendMessage() {
             const userText = userInput.value.trim();
-            if (userText === '' || isSending) return;
+            
+            // Check if either text or image exists
+            if (userText === '' && selectedImageBase64 === null || isSending || !userId) return;
 
-            // 1. Display user message and clear input
-            addMessage(userText, 'user');
+            // 1. Display user message and save to persistence layer
             userInput.value = '';
+            // For saving, we use the text, and if an image was attached, we prepend a note
+            const messageToSave = selectedImageBase64 ? 
+                (userText ? `[Image Attached] ${userText}` : `[Image Attached]`) : 
+                userText;
+                
+            await saveMessage(messageToSave, 'user');
             
             // 2. Set loading state
             setLoading(true);
 
             try {
                 // 3. Call the AI model
-                const responseData = await callGeminiApi(userText);
+                const responseData = await getAIResponse(userText);
                 
-                // 4. Display bot response
-                addMessage(responseData.text, 'bot', responseData.sources);
+                // 4. Save bot response to persistence layer (UI updates automatically via onSnapshot)
+                await saveMessage(responseData.text, 'bot', responseData.sources);
 
             } catch (error) {
-                // 5. Display error message
-                addMessage(error.message, 'bot');
+                // 5. Save error message to persistence layer
+                await saveMessage(error.message, 'bot');
             } finally {
                 // 6. Reset state
                 setLoading(false);
-                userInput.focus();
+                clearImage(); // Clear the selected image and preview
+                setControlsReady(true);
             }
         }
         
         // --- Initialization ---
-        window.onload = () => {
-            // Re-check button state after everything loads
-            sendButton.disabled = userInput.value.trim() === '';
-            userInput.focus();
-        };
 
+        async function initFirebase() {
+            try {
+                // Firebase config is globally provided
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                
+                if (Object.keys(firebaseConfig).length === 0) {
+                    throw new Error("Firebase configuration not available.");
+                }
+
+                // Initialize Firebase
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // Set Firestore logging level
+                setLogLevel('error'); // Use 'debug' if troubleshooting rules/connections
+
+                // Handle authentication
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        setupHistoryListener();
+                        setControlsReady(true);
+                    } else {
+                        userId = null;
+                        setControlsReady(false);
+                        console.error("User is not authenticated.");
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                userInfo.textContent = `Agent Status: Initialization Failed. Check console for details.`;
+                renderHistory([]); // Clear loading and show empty chat
+            }
+        }
+
+        window.onload = () => {
+            initFirebase();
+            setupVoiceRecognition();
+            
+            // Attach event listeners for text input and button
+            sendButton.addEventListener('click', sendMessage);
+            userInput.addEventListener('keydown', (event) => {
+                if(event.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            // Handle input change for button disabling/enabling (updated to check image state)
+            userInput.addEventListener('input', () => {
+                sendButton.disabled = isSending || (userInput.value.trim() === '' && selectedImageBase64 === null);
+            });
+            
+            // Attach new file/image listeners
+            uploadButton.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleFileSelect);
+            clearImageButton.addEventListener('click', clearImage);
+        };
     </script>
 </body>
 </html>
